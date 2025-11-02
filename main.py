@@ -14,19 +14,20 @@ import base64
 from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 from cryptography.hazmat.backends import default_backend
 import secrets
-# ===== FUNGSI SALSA20 ENCRYPTION DENGAN KUNCI USER =====
 
-def derive_salsa_key(user_key):
+# ===== FUNGSI CHACHA20 ENCRYPTION DENGAN KUNCI USER =====
+
+def derive_chacha_key(user_key):
     """Derive 32-byte key from user input using SHA256"""
     return hashlib.sha256(user_key.encode()).digest()
 
-def encrypt_salsa20(text, user_key):
-    """Encrypt text using Salsa20 algorithm with user key"""
+def encrypt_chacha20(text, user_key):
+    """Encrypt text using ChaCha20 algorithm with user key"""
     try:
         # Derive key from user input
-        key = derive_salsa_key(user_key)
+        key = derive_chacha_key(user_key)
         
-        # Generate random nonce (16 bytes for Salsa20)
+        # Generate random nonce (16 bytes for ChaCha20)
         nonce = secrets.token_bytes(16)
         
         # Convert text to bytes
@@ -48,14 +49,14 @@ def encrypt_salsa20(text, user_key):
         st.error(f"Encryption error: {e}")
         return None
 
-def decrypt_salsa20(encrypted_text, user_key):
+def decrypt_chacha20(encrypted_text, user_key):
     """Decrypt text using ChaCha20 algorithm with user key - always return result even if wrong key"""
     try:
         if not encrypted_text:
             return "[EMPTY]"
             
         # Derive key from user input
-        key = derive_salsa_key(user_key)
+        key = derive_chacha_key(user_key)
         
         # Decode from base64
         try:
@@ -98,7 +99,6 @@ def decrypt_salsa20(encrypted_text, user_key):
     
     except Exception as e:
         return f"[DECRYPTION_ERROR: {str(e)}]"
-
 
 # ===== FUNGSI CAESAR & XOR =====
 
@@ -352,7 +352,7 @@ def validate_input(username, password):
         return "Username hanya boleh mengandung huruf, angka, dan underscore"
     return None
 
-# ===== FUNGSI DATABASE MOBIL DENGAN ENKRIPSI SALSA20 =====
+# ===== FUNGSI DATABASE MOBIL DENGAN ENKRIPSI CHACHA20 =====
 
 def init_car_db():
     """Initialize database for cars"""
@@ -369,16 +369,8 @@ def init_car_db():
     conn.commit()
     conn.close()
 
-# def get_salsa_key():
-#     """Get or generate Salsa20 key from session state"""
-#     if 'salsa_key' not in st.session_state:
-#         # Generate new key if not exists
-#         st.session_state.salsa_key = generate_salsa20_key()
-#         st.info("🔑 Kunci enkripsi baru telah di-generate untuk session ini.")
-#     return st.session_state.salsa_key
-
 def create_car(model, brand, price, encryption_key):
-    """Add new car to database with Salsa20 encryption using user key"""
+    """Add new car to database with ChaCha20 encryption using user key"""
     try:
         # Pastikan semua data adalah string sebelum dienkripsi
         model_str = str(model)
@@ -386,9 +378,9 @@ def create_car(model, brand, price, encryption_key):
         price_str = str(price)
         
         # Encrypt all fields dengan kunci user
-        encrypted_model = encrypt_salsa20(model_str, encryption_key)
-        encrypted_brand = encrypt_salsa20(brand_str, encryption_key)
-        encrypted_price = encrypt_salsa20(price_str, encryption_key)
+        encrypted_model = encrypt_chacha20(model_str, encryption_key)
+        encrypted_brand = encrypt_chacha20(brand_str, encryption_key)
+        encrypted_price = encrypt_chacha20(price_str, encryption_key)
 
         if not all([encrypted_model, encrypted_brand, encrypted_price]):
             st.error("Gagal mengenkripsi data! Periksa kunci dan data input.")
@@ -406,7 +398,7 @@ def create_car(model, brand, price, encryption_key):
         return False
 
 def read_cars(encryption_key):
-    """Get all cars from database with Salsa20 decryption - always show results even with wrong key"""
+    """Get all cars from database with ChaCha20 decryption - always show results even with wrong key"""
     try:
         conn = sqlite3.connect('cars.db')
         c = conn.cursor()
@@ -423,9 +415,9 @@ def read_cars(encryption_key):
         for car in encrypted_cars:
             car_id, encrypted_model, encrypted_brand, encrypted_price = car
             
-            model = decrypt_salsa20(encrypted_model, encryption_key)
-            brand = decrypt_salsa20(encrypted_brand, encryption_key)
-            price = decrypt_salsa20(encrypted_price, encryption_key)
+            model = decrypt_chacha20(encrypted_model, encryption_key)
+            brand = decrypt_chacha20(encrypted_brand, encryption_key)
+            price = decrypt_chacha20(encrypted_price, encryption_key)
             
             # Check if any field looks like wrong key (contains error markers)
             has_errors = any(field.startswith('[') and field.endswith(']') for field in [model, brand, price])
@@ -616,8 +608,8 @@ def page_super_encryption():
             st.text_input("Salin hasil dekripsi:", value=final_result, key="decrypted_result")
 
 def page_car_database():
-    st.header("🚗 Database Mobil dengan Enkripsi Salsa20")
-    st.write("Kelola data mobil dengan enkripsi Salsa20 - **Data akan tetap ditampilkan meski kunci salah**")
+    st.header("🚗 Database Mobil dengan Enkripsi ChaCha20")
+    st.write("Kelola data mobil dengan enkripsi ChaCha20 - **Data akan tetap ditampilkan meski kunci salah**")
     
     # Initialize car database
     init_car_db()
@@ -665,9 +657,9 @@ def page_car_database():
         # Test kunci
         if st.button("🧪 Test Kunci Ini"):
             test_text = "Data testing 123"
-            encrypted = encrypt_salsa20(test_text, encryption_key)
+            encrypted = encrypt_chacha20(test_text, encryption_key)
             if encrypted:
-                decrypted = decrypt_salsa20(encrypted, encryption_key)
+                decrypted = decrypt_chacha20(encrypted, encryption_key)
                 st.write(f"**Test Enkripsi/Deskripsi:**")
                 st.write(f"Original: `{test_text}`")
                 st.write(f"Terenkripsi: `{encrypted[:50]}...`")
@@ -710,9 +702,9 @@ def page_car_database():
                             st.write("**Data sebelum enkripsi:**")
                             st.code(f"Brand: {brand}\nModel: {model}\nHarga: Rp {price:,}")
                             
-                            enc_brand = encrypt_salsa20(brand, encryption_key)
-                            enc_model = encrypt_salsa20(model, encryption_key)
-                            enc_price = encrypt_salsa20(str(price), encryption_key)
+                            enc_brand = encrypt_chacha20(brand, encryption_key)
+                            enc_model = encrypt_chacha20(model, encryption_key)
+                            enc_price = encrypt_chacha20(str(price), encryption_key)
                             
                             st.write("**Data setelah enkripsi (disimpan di database):**")
                             st.code(f"Brand: {enc_brand}\nModel: {enc_model}\nHarga: {enc_price}")
