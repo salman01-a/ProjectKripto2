@@ -30,7 +30,7 @@ def encrypt_salsa20(text, key):
         # Convert text to bytes
         text_bytes = text.encode('utf-8')
         
-        # Create Salsa20 cipher
+        # Create ChaCha20 cipher
         algorithm = algorithms.ChaCha20(key, nonce)
         cipher = Cipher(algorithm, mode=None, backend=default_backend())
         encryptor = cipher.encryptor()
@@ -47,16 +47,23 @@ def encrypt_salsa20(text, key):
         return None
 
 def decrypt_salsa20(encrypted_text, key):
-    """Decrypt text using Salsa20 algorithm"""
+    """Decrypt text using ChaCha20 algorithm"""
     try:
-        # Decode from base64
-        encrypted_data = base64.b64decode(encrypted_text.encode('utf-8'))
+        # Decode from base64 - PERBAIKAN: handle padding issues
+        try:
+            encrypted_data = base64.b64decode(encrypted_text.encode('utf-8'))
+        except Exception:
+            # Try adding padding if necessary
+            padding = 4 - (len(encrypted_text) % 4)
+            if padding != 4:
+                encrypted_text += "=" * padding
+            encrypted_data = base64.b64decode(encrypted_text.encode('utf-8'))
         
-        # Extract nonce (first 8 bytes) and ciphertext
-        nonce = encrypted_data[:8]
-        ciphertext = encrypted_data[8:]
+        # Extract nonce (first 16 bytes) and ciphertext - PERBAIKAN: konsisten 16 bytes
+        nonce = encrypted_data[:16]
+        ciphertext = encrypted_data[16:]
         
-        # Create Salsa20 cipher
+        # Create ChaCha20 cipher
         algorithm = algorithms.ChaCha20(key, nonce)
         cipher = Cipher(algorithm, mode=None, backend=default_backend())
         decryptor = cipher.decryptor()
@@ -329,6 +336,7 @@ def get_salsa_key():
     if 'salsa_key' not in st.session_state:
         # Generate new key if not exists
         st.session_state.salsa_key = generate_salsa20_key()
+        st.info("🔑 Kunci enkripsi baru telah di-generate untuk session ini.")
     return st.session_state.salsa_key
 
 def create_car(model, brand, price):
@@ -336,16 +344,16 @@ def create_car(model, brand, price):
     try:
         salsa_key = get_salsa_key()
         
-        # Debug: print key length
-        st.write(f"Key length: {len(salsa_key)} bytes")
+        # Pastikan semua data adalah string sebelum dienkripsi
+        model_str = str(model)
+        brand_str = str(brand)
+        price_str = str(price)  # Pastikan price adalah string
         
         # Encrypt all fields
-        encrypted_model = encrypt_salsa20(model, salsa_key)
-        encrypted_brand = encrypt_salsa20(brand, salsa_key)
-        encrypted_price = encrypt_salsa20(str(price), salsa_key)
-        
-        st.write(f"Encryption results - Model: {encrypted_model is not None}, Brand: {encrypted_brand is not None}, Price: {encrypted_price is not None}")
-        
+        encrypted_model = encrypt_salsa20(model_str, salsa_key)
+        encrypted_brand = encrypt_salsa20(brand_str, salsa_key)
+        encrypted_price = encrypt_salsa20(price_str, salsa_key)
+
         if not all([encrypted_model, encrypted_brand, encrypted_price]):
             st.error("Gagal mengenkripsi data!")
             return False
@@ -380,10 +388,17 @@ def read_cars():
             brand = decrypt_salsa20(encrypted_brand, salsa_key)
             price = decrypt_salsa20(encrypted_price, salsa_key)
             
-            if all([model, brand, price]):
-                decrypted_cars.append((car_id, model, brand, float(price)))
+            if all([model, brand, price_str]):
+                try:
+                    # Coba konversi ke float, tapi simpan sebagai string untuk konsistensi
+                    price = float(price_str)
+                    decrypted_cars.append((car_id, model, brand, price))
+                except ValueError:
+                    st.error(f"Format harga tidak valid untuk mobil ID {car_id}")
             else:
                 st.error(f"Gagal mendekripsi data mobil ID {car_id}")
+                # Tampilkan data terenkripsi untuk debug
+                st.write(f"Data terenkripsi - Model: {encrypted_model[:50]}..., Brand: {encrypted_brand[:50]}..., Price: {encrypted_price[:50]}...")
                 
         return decrypted_cars
     except Exception as e:
@@ -491,6 +506,22 @@ def page_car_database():
         2. Data didekripsi saat akan ditampilkan
         3. Kunci enkripsi di-generate otomatis saat session dimulai
         """)
+    
+    # PERBAIKAN: Tombol untuk reset database jika ada masalah dekripsi
+    with st.expander("⚙️ Tools Administrasi"):
+        st.warning("Hanya gunakan jika ada masalah dengan data yang ada!")
+        if st.button("🔄 Reset Database dan Kunci Enkripsi"):
+            if 'salsa_key' in st.session_state:
+                del st.session_state.salsa_key
+            try:
+                conn = sqlite3.connect('cars.db')
+                c = conn.cursor()
+                c.execute('DROP TABLE IF EXISTS cars')
+                conn.commit()
+                conn.close()
+                st.success("Database berhasil direset! Kunci enkripsi baru akan dibuat otomatis.")
+            except Exception as e:
+                st.error(f"Error reset database: {e}")
     
     tab1, tab2 = st.tabs(["➕ Tambah Mobil", "📋 Lihat & Hapus Mobil"])
     
