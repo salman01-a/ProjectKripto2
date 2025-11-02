@@ -14,16 +14,18 @@ import base64
 from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 from cryptography.hazmat.backends import default_backend
 import secrets
+# ===== FUNGSI SALSA20 ENCRYPTION DENGAN KUNCI USER =====
 
-# ===== FUNGSI SALSA20 ENCRYPTION =====
+def derive_salsa_key(user_key):
+    """Derive 32-byte key from user input using SHA256"""
+    return hashlib.sha256(user_key.encode()).digest()
 
-def generate_salsa20_key():
-    """Generate random key for Salsa20 (32 bytes)"""
-    return secrets.token_bytes(32)
-
-def     encrypt_salsa20(text, key):
-    """Encrypt text using Salsa20 algorithm"""
+def encrypt_salsa20(text, user_key):
+    """Encrypt text using Salsa20 algorithm with user key"""
     try:
+        # Derive key from user input
+        key = derive_salsa_key(user_key)
+        
         # Generate random nonce (16 bytes for Salsa20)
         nonce = secrets.token_bytes(16)
         
@@ -46,13 +48,16 @@ def     encrypt_salsa20(text, key):
         st.error(f"Encryption error: {e}")
         return None
 
-def decrypt_salsa20(encrypted_text, key):
-    """Decrypt text using ChaCha20 algorithm"""
+def decrypt_salsa20(encrypted_text, user_key):
+    """Decrypt text using ChaCha20 algorithm with user key - always return result even if wrong key"""
     try:
         if not encrypted_text:
-            return None
+            return "[EMPTY]"
             
-        # Decode from base64 - PERBAIKAN: handle padding issues
+        # Derive key from user input
+        key = derive_salsa_key(user_key)
+        
+        # Decode from base64
         try:
             encrypted_data = base64.b64decode(encrypted_text.encode('utf-8'))
         except Exception:
@@ -63,15 +68,12 @@ def decrypt_salsa20(encrypted_text, key):
                     encrypted_text += "=" * padding
                 encrypted_data = base64.b64decode(encrypted_text.encode('utf-8'))
             except Exception as e:
-                st.error(f"Base64 decode error: {e}")
-                return None
+                return f"[BASE64_ERROR: {str(e)}]"
         
-        # Pastikan data cukup panjang untuk nonce
-        if len(encrypted_data) < 16:
-            st.error(f"Data terenkripsi terlalu pendek: {len(encrypted_data)} bytes")
-            return None
-            
         # Extract nonce (first 16 bytes) and ciphertext
+        if len(encrypted_data) < 16:
+            return f"[DATA_TOO_SHORT: {len(encrypted_data)} bytes]"
+            
         nonce = encrypted_data[:16]
         ciphertext = encrypted_data[16:]
         
@@ -83,17 +85,20 @@ def decrypt_salsa20(encrypted_text, key):
         # Decrypt the text
         decrypted_bytes = decryptor.update(ciphertext) + decryptor.finalize()
         
-        # Coba decode sebagai UTF-8
+        # Try to decode as UTF-8
         try:
-            return decrypted_bytes.decode('utf-8')
+            result = decrypted_bytes.decode('utf-8')
+            # Check if result contains unusual characters that might indicate wrong key
+            if any(ord(c) > 127 for c in result) and len(result) > 0:
+                return f"[POSSIBLE_WRONG_KEY: {result}]"
+            return result
         except UnicodeDecodeError:
-            # Jika gagal, coba encoding lain atau return raw bytes
-            st.warning(f"Tidak bisa decode sebagai UTF-8, menggunakan repr: {repr(decrypted_bytes)}")
-            return str(decrypted_bytes)
+            # Return raw bytes as string for wrong key
+            return f"[DECODE_ERROR: {decrypted_bytes.hex()[:50]}...]"
     
     except Exception as e:
-        st.error(f"Decryption error: {e}")
-        return None
+        return f"[DECRYPTION_ERROR: {str(e)}]"
+
 
 # ===== FUNGSI CAESAR & XOR =====
 
@@ -120,15 +125,29 @@ def xor_cipher(text, key):
         result += chr(xor_result)
     return result
 
+def xor_cipher_with_ascii(text, key):
+    """XOR cipher dengan return tambahan: result string dan list ASCII"""
+    result = ""
+    ascii_values = []
+    key_length = len(key)
+    for i, char in enumerate(str(text)):
+        key_char = key[i % key_length]
+        xor_result = ord(char) ^ ord(key_char)
+        result += chr(xor_result)
+        ascii_values.append(xor_result)
+    return result, ascii_values
+
 def super_encrypt(text, caesar_key, xor_key):
+    """Super encrypt dengan return tambahan untuk ASCII values"""
     caesar_result = caesar_cipher(text, caesar_key)
-    final_result = xor_cipher(caesar_result, xor_key)
-    return caesar_result, final_result
+    final_result, ascii_values = xor_cipher_with_ascii(caesar_result, xor_key)
+    return caesar_result, final_result, ascii_values
 
 def super_decrypt(encrypted_text, caesar_key, xor_key):
-    xor_result = xor_cipher(encrypted_text, xor_key)
+    """Super decrypt dengan return tambahan untuk ASCII values"""
+    xor_result, ascii_values = xor_cipher_with_ascii(encrypted_text, xor_key)
     final_result = caesar_cipher(xor_result, -caesar_key)
-    return xor_result, final_result
+    return xor_result, final_result, ascii_values
 
 # ===== FUNGSI STEGANOGRAFI =====
 
@@ -350,31 +369,29 @@ def init_car_db():
     conn.commit()
     conn.close()
 
-def get_salsa_key():
-    """Get or generate Salsa20 key from session state"""
-    if 'salsa_key' not in st.session_state:
-        # Generate new key if not exists
-        st.session_state.salsa_key = generate_salsa20_key()
-        st.info("🔑 Kunci enkripsi baru telah di-generate untuk session ini.")
-    return st.session_state.salsa_key
+# def get_salsa_key():
+#     """Get or generate Salsa20 key from session state"""
+#     if 'salsa_key' not in st.session_state:
+#         # Generate new key if not exists
+#         st.session_state.salsa_key = generate_salsa20_key()
+#         st.info("🔑 Kunci enkripsi baru telah di-generate untuk session ini.")
+#     return st.session_state.salsa_key
 
-def create_car(model, brand, price):
-    """Add new car to database with Salsa20 encryption"""
+def create_car(model, brand, price, encryption_key):
+    """Add new car to database with Salsa20 encryption using user key"""
     try:
-        salsa_key = get_salsa_key()
-        
         # Pastikan semua data adalah string sebelum dienkripsi
         model_str = str(model)
         brand_str = str(brand)
-        price_str = str(price)  # Pastikan price adalah string
+        price_str = str(price)
         
-        # Encrypt all fields
-        encrypted_model = encrypt_salsa20(model_str, salsa_key)
-        encrypted_brand = encrypt_salsa20(brand_str, salsa_key)
-        encrypted_price = encrypt_salsa20(price_str, salsa_key)
+        # Encrypt all fields dengan kunci user
+        encrypted_model = encrypt_salsa20(model_str, encryption_key)
+        encrypted_brand = encrypt_salsa20(brand_str, encryption_key)
+        encrypted_price = encrypt_salsa20(price_str, encryption_key)
 
         if not all([encrypted_model, encrypted_brand, encrypted_price]):
-            st.error("Gagal mengenkripsi data!")
+            st.error("Gagal mengenkripsi data! Periksa kunci dan data input.")
             return False
             
         conn = sqlite3.connect('cars.db')
@@ -388,42 +405,50 @@ def create_car(model, brand, price):
         st.error(f"Error: {e}")
         return False
 
-def read_cars():
-    """Get all cars from database with Salsa20 decryption"""
+def read_cars(encryption_key):
+    """Get all cars from database with Salsa20 decryption - always show results even with wrong key"""
     try:
-        salsa_key = get_salsa_key()
         conn = sqlite3.connect('cars.db')
         c = conn.cursor()
         c.execute('SELECT * FROM cars')
         encrypted_cars = c.fetchall()
         conn.close()
         
-        # Decrypt all fields
+        # Track if we have any successful decryptions
+        successful_decrypts = 0
+        total_cars = len(encrypted_cars)
+        
+        # Decrypt all fields dengan kunci user
         decrypted_cars = []
         for car in encrypted_cars:
             car_id, encrypted_model, encrypted_brand, encrypted_price = car
             
-            model = decrypt_salsa20(encrypted_model, salsa_key)
-            brand = decrypt_salsa20(encrypted_brand, salsa_key)
-            price = decrypt_salsa20(encrypted_price, salsa_key)
+            model = decrypt_salsa20(encrypted_model, encryption_key)
+            brand = decrypt_salsa20(encrypted_brand, encryption_key)
+            price = decrypt_salsa20(encrypted_price, encryption_key)
             
-            if all([model, brand, price]):
+            # Check if any field looks like wrong key (contains error markers)
+            has_errors = any(field.startswith('[') and field.endswith(']') for field in [model, brand, price])
+            
+            if not has_errors:
+                successful_decrypts += 1
                 try:
-                    # Coba konversi ke float, tapi simpan sebagai string untuk konsistensi
-                    price = float(price)
-                    decrypted_cars.append((car_id, model, brand, price))
+                    # Try to convert price to float for proper formatting
+                    price_float = float(price)
+                    decrypted_cars.append((car_id, model, brand, price_float, True))  # True = successful decrypt
                 except ValueError:
-                    st.error(f"Format harga tidak valid untuk mobil ID {car_id}")
+                    decrypted_cars.append((car_id, model, brand, price, True))
             else:
-                st.error(f"Gagal mendekripsi data mobil ID {car_id}")
-                # Tampilkan data terenkripsi untuk debug
-                st.write(f"Data terenkripsi - Model: {encrypted_model[:50]}..., Brand: {encrypted_brand[:50]}..., Price: {encrypted_price[:50]}...")
+                # Add with error flag
+                decrypted_cars.append((car_id, model, brand, price, False))
                 
-        return decrypted_cars
+        return decrypted_cars, successful_decrypts, total_cars
+        
     except Exception as e:
-        st.error(f"Error: {e}")
-        return []
-
+        st.error(f"Error membaca data mobil: {e}")
+        return [], 0, 0
+    
+    
 def delete_car(car_id):
     """Delete car from database"""
     try:
@@ -464,6 +489,10 @@ def page_super_encryption():
             help="Kunci berupa string"
         )
     
+    # Checkbox untuk menampilkan detail ASCII
+    show_ascii = st.checkbox("📊 Tampilkan Detail ASCII", value=True,
+                           help="Tampilkan representasi ASCII dari setiap step")
+    
     if st.button(f"🚀 Jalankan {mode}"):
         if not text_input:
             st.warning("Masukkan teks terlebih dahulu!")
@@ -475,77 +504,184 @@ def page_super_encryption():
         
         if mode == "Enkripsi":
             st.subheader("🔒 Hasil Enkripsi")
-            caesar_result, final_result = super_encrypt(text_input, caesar_key, xor_key)
+            caesar_result, final_result, ascii_values = super_encrypt(text_input, caesar_key, xor_key)
             
-            st.write("**Step 1 - Caesar Cipher:**")
-            st.code(f"Input: {text_input}")
-            st.code(f"Setelah Caesar (shift {caesar_key}): {caesar_result}")
+            # Tampilkan step-by-step process
+            col_step1, col_step2 = st.columns(2)
             
-            st.write("**Step 2 - XOR Cipher:**")
-            st.code(f"Setelah XOR (kunci '{xor_key}'): {final_result}")
+            with col_step1:
+                st.write("**Step 1 - Caesar Cipher:**")
+                st.code(f"Input: {text_input}")
+                st.code(f"Setelah Caesar (shift {caesar_key}): {caesar_result}")
+                
+                if show_ascii:
+                    st.write("**ASCII Caesar Result:**")
+                    caesar_ascii = [ord(c) for c in caesar_result]
+                    st.code(caesar_ascii)
+                    st.caption(f"Panjang: {len(caesar_ascii)} karakter")
             
-            st.write("**🎯 Hasil Final:**")
+            with col_step2:
+                st.write("**Step 2 - XOR Cipher:**")
+                st.code(f"Setelah XOR (kunci '{xor_key}'): {final_result}")
+                
+                if show_ascii:
+                    st.write("**ASCII XOR Result:**")
+                    st.code(ascii_values)
+                    st.caption(f"Panjang: {len(ascii_values)} karakter")
+                    
+                    # Tampilkan detail per karakter
+                    with st.expander("🔍 Detail Per Karakter XOR"):
+                        st.write("**Proses XOR per karakter:**")
+                        for i, char in enumerate(caesar_result):
+                            if i < len(ascii_values):
+                                key_char = xor_key[i % len(xor_key)]
+                                st.write(f"`{char}` (ASCII: {ord(char):3d}) XOR `{key_char}` (ASCII: {ord(key_char):3d}) = `{final_result[i]}` (ASCII: {ascii_values[i]:3d})")
+            
+            st.write("**🎯 Hasil Final Enkripsi:**")
             st.success(final_result)
             
-            st.text_input("Salin hasil:", value=final_result, key="encrypted_result")
+            # Tampilkan dalam berbagai format
+            with st.expander("📋 Hasil dalam Format Lain"):
+                col_format1, col_format2 = st.columns(2)
+                
+                with col_format1:
+                    st.write("**Hexadecimal:**")
+                    hex_result = ' '.join([f"{b:02x}" for b in ascii_values])
+                    st.code(hex_result)
+                    
+                    st.write("**Binary:**")
+                    binary_result = ' '.join([format(b, '08b') for b in ascii_values])
+                    st.code(binary_result)
+                
+                with col_format2:
+                    st.write("**Decimal (untuk programming):**")
+                    st.code(str(ascii_values))
+                    
+                    st.write("**Panjang Data:**")
+                    st.info(f"Input: {len(text_input)} karakter → Output: {len(final_result)} karakter")
             
-        else:
+            st.text_input("Salin hasil enkripsi:", value=final_result, key="encrypted_result")
+            
+        else:  # Mode Dekripsi
             st.subheader("🔓 Hasil Dekripsi")
-            xor_result, final_result = super_decrypt(text_input, caesar_key, xor_key)
+            xor_result, final_result, ascii_values = super_decrypt(text_input, caesar_key, xor_key)
             
-            st.write("**Step 1 - XOR Decrypt:**")
-            st.code(f"Input: {text_input}")
-            st.code(f"Setelah XOR (kunci '{xor_key}'): {xor_result}")
+            # Tampilkan step-by-step process
+            col_step1, col_step2 = st.columns(2)
             
-            st.write("**Step 2 - Caesar Decrypt:**")
-            st.code(f"Setelah Caesar (shift -{caesar_key}): {final_result}")
+            with col_step1:
+                st.write("**Step 1 - XOR Decrypt:**")
+                st.code(f"Input: {text_input}")
+                st.code(f"Setelah XOR (kunci '{xor_key}'): {xor_result}")
+                
+                if show_ascii:
+                    st.write("**ASCII XOR Result:**")
+                    st.code(ascii_values)
+                    st.caption(f"Panjang: {len(ascii_values)} karakter")
+                    
+                    # Tampilkan detail per karakter untuk XOR decrypt
+                    with st.expander("🔍 Detail Per Karakter XOR Decrypt"):
+                        st.write("**Proses XOR per karakter:**")
+                        input_ascii = [ord(c) for c in text_input]
+                        for i, char in enumerate(text_input):
+                            if i < len(ascii_values) and i < len(xor_result):
+                                key_char = xor_key[i % len(xor_key)]
+                                st.write(f"`{char}` (ASCII: {input_ascii[i]:3d}) XOR `{key_char}` (ASCII: {ord(key_char):3d}) = `{xor_result[i]}` (ASCII: {ascii_values[i]:3d})")
             
-            st.write("**🎯 Hasil Final:**")
+            with col_step2:
+                st.write("**Step 2 - Caesar Decrypt:**")
+                st.code(f"Setelah Caesar (shift -{caesar_key}): {final_result}")
+                
+                if show_ascii:
+                    st.write("**ASCII Final Result:**")
+                    final_ascii = [ord(c) for c in final_result]
+                    st.code(final_ascii)
+                    st.caption(f"Panjang: {len(final_ascii)} karakter")
+            
+            st.write("**🎯 Hasil Final Dekripsi:**")
             st.success(final_result)
             
-            st.text_input("Salin hasil:", value=final_result, key="decrypted_result")
+            # Validasi hasil
+            if show_ascii:
+                with st.expander("✅ Validasi Hasil"):
+                    # Test dengan enkripsi ulang untuk validasi
+                    test_encrypted, _, _ = super_encrypt(final_result, caesar_key, xor_key)
+                    if test_encrypted == text_input:
+                        st.success("✅ Validasi berhasil: Enkripsi ulang menghasilkan input awal!")
+                    else:
+                        st.warning("⚠️ Validasi gagal: Hasil dekripsi mungkin tidak akurat")
+                        st.write(f"Input awal: {text_input}")
+                        st.write(f"Enkripsi ulang: {test_encrypted}")
+            
+            st.text_input("Salin hasil dekripsi:", value=final_result, key="decrypted_result")
 
 def page_car_database():
     st.header("🚗 Database Mobil dengan Enkripsi Salsa20")
-    st.write("Kelola data mobil dengan enkripsi Salsa20 - Create, Read, Delete")
+    st.write("Kelola data mobil dengan enkripsi Salsa20 - **Data akan tetap ditampilkan meski kunci salah**")
     
     # Initialize car database
     init_car_db()
     
-    # Info tentang enkripsi
-    with st.expander("ℹ️ Tentang Enkripsi Salsa20"):
-        st.write("""
-        **Fitur Keamanan:**
-        - 🔐 **Salsa20 Encryption**: Semua data dienkripsi sebelum disimpan ke database
-        - 🔑 **Key Management**: Kunci enkripsi disimpan secara aman di session
-        - 🛡️ **Data Protection**: Model, brand, dan harga mobil terenkripsi di database
-        
-        **Alur Kerja:**
-        1. Data dienkripsi dengan Salsa20 sebelum disimpan
-        2. Data didekripsi saat akan ditampilkan
-        3. Kunci enkripsi di-generate otomatis saat session dimulai
+    # Input kunci enkripsi dari user
+    st.subheader("🔑 Kunci Enkripsi")
+    col1, col2 = st.columns([3, 1])
+    
+    with col1:
+        encryption_key = st.text_input(
+            "Masukkan Kunci Enkripsi:", 
+            type="password",
+            placeholder="Kunci yang sama harus digunakan untuk encrypt dan decrypt",
+            help="Coba kunci berbeda untuk melihat efeknya pada data terdekripsi!"
+        )
+    
+    with col2:
+        show_encrypted = st.checkbox("Tampilkan Data Terenkripsi", help="Lihat data asli di database")
+    
+    if not encryption_key:
+        st.warning("⚠️ Silakan masukkan kunci enkripsi untuk mengakses database mobil.")
+        st.info("""
+        **Fitur Baru:**
+        - Data akan tetap ditampilkan meski kunci salah
+        - Anda bisa melihat bagaimana kunci yang berbeda menghasilkan data terdekripsi yang berbeda
+        - Kunci yang benar akan menampilkan data yang bermakna
         """)
+        
+        # Tampilkan data terenkripsi saja jika checkbox dicentang
+        if show_encrypted:
+            display_encrypted_data_only()
+        return
     
-    # PERBAIKAN: Tombol untuk reset database jika ada masalah dekripsi
-    with st.expander("⚙️ Tools Administrasi"):
-        st.warning("Hanya gunakan jika ada masalah dengan data yang ada!")
-        if st.button("🔄 Reset Database dan Kunci Enkripsi"):
-            if 'salsa_key' in st.session_state:
-                del st.session_state.salsa_key
-            try:
-                conn = sqlite3.connect('cars.db')
-                c = conn.cursor()
-                c.execute('DROP TABLE IF EXISTS cars')
-                conn.commit()
-                conn.close()
-                st.success("Database berhasil direset! Kunci enkripsi baru akan dibuat otomatis.")
-            except Exception as e:
-                st.error(f"Error reset database: {e}")
-    
+    # Info tentang status kunci
+    with st.expander("ℹ️ Status Kunci & Enkripsi"):
+        st.write(f"""
+        **Kunci Saat Ini:** `{encryption_key[:8]}...` (panjang: {len(encryption_key)} karakter)
+        
+        **Cara Kerja:**
+        - Setiap kunci akan menghasilkan output dekripsi yang berbeda
+        - Hanya kunci yang benar yang akan menampilkan data asli
+        - Kunci salah akan menampilkan karakter acak atau pesan error
+        """)
+        
+        # Test kunci
+        if st.button("🧪 Test Kunci Ini"):
+            test_text = "Data testing 123"
+            encrypted = encrypt_salsa20(test_text, encryption_key)
+            if encrypted:
+                decrypted = decrypt_salsa20(encrypted, encryption_key)
+                st.write(f"**Test Enkripsi/Deskripsi:**")
+                st.write(f"Original: `{test_text}`")
+                st.write(f"Terenkripsi: `{encrypted[:50]}...`")
+                st.write(f"Terdekripsi: `{decrypted}`")
+                
+                if decrypted == test_text:
+                    st.success("✅ Kunci berfungsi dengan baik!")
+                else:
+                    st.warning("⚠️ Kunci menghasilkan output yang tidak sesuai!")
+
     tab1, tab2 = st.tabs(["➕ Tambah Mobil", "📋 Lihat & Hapus Mobil"])
     
     with tab1:
-        st.subheader("Tambah Mobil Baru")
+        st.subheader("Tambah Mobil Baru (Terenkripsi)")
         
         with st.form("add_car_form"):
             col1, col2 = st.columns(2)
@@ -566,43 +702,129 @@ def page_car_database():
                 elif price <= 0:
                     st.error("Harga harus lebih dari 0!")
                 else:
-                    if create_car(model, brand, price):
-                        st.success(f"✅ Mobil {brand} {model} berhasil ditambahkan dengan enkripsi Salsa20!")
+                    if create_car(model, brand, price, encryption_key):
+                        st.success(f"✅ Mobil {brand} {model} berhasil ditambahkan dengan enkripsi!")
+                        
+                        # Tampilkan perbandingan enkripsi
+                        with st.expander("🔍 Lihat Detail Enkripsi"):
+                            st.write("**Data sebelum enkripsi:**")
+                            st.code(f"Brand: {brand}\nModel: {model}\nHarga: Rp {price:,}")
+                            
+                            enc_brand = encrypt_salsa20(brand, encryption_key)
+                            enc_model = encrypt_salsa20(model, encryption_key)
+                            enc_price = encrypt_salsa20(str(price), encryption_key)
+                            
+                            st.write("**Data setelah enkripsi (disimpan di database):**")
+                            st.code(f"Brand: {enc_brand}\nModel: {enc_model}\nHarga: {enc_price}")
                     else:
                         st.error("❌ Gagal menambahkan mobil!")
     
     with tab2:
-        st.subheader("Daftar Mobil (Terdokripsi)")
+        st.subheader("Daftar Mobil (Hasil Dekripsi)")
         
-        cars = read_cars()
+        # Dapatkan data mobil
+        cars, successful_decrypts, total_cars = read_cars(encryption_key)
+        
+        # Tampilkan status dekripsi
+        if total_cars > 0:
+            if successful_decrypts == total_cars:
+                st.success(f"✅ Semua {total_cars} mobil berhasil didekripsi dengan kunci ini!")
+            elif successful_decrypts > 0:
+                st.warning(f"⚠️ {successful_decrypts} dari {total_cars} mobil berhasil didekripsi. Beberapa data mungkin menggunakan kunci berbeda.")
+            else:
+                st.error(f"❌ Tidak ada data yang berhasil didekripsi dengan kunci ini. Kemungkinan kunci salah!")
         
         if not cars:
             st.info("📝 Belum ada data mobil. Silakan tambah mobil baru di tab 'Tambah Mobil'.")
         else:
-            st.write(f"**Total {len(cars)} mobil ditemukan:**")
+            st.write(f"**Menampilkan {len(cars)} mobil:**")
             
             for car in cars:
-                car_id, model, brand, price = car
+                car_id, model, brand, price, decrypt_success = car
                 
                 with st.container():
+                    # Tampilkan border warna berdasarkan status dekripsi
+                    if decrypt_success:
+                        st.markdown(f'<div style="border-left: 4px solid #00ff00; padding-left: 10px;">', unsafe_allow_html=True)
+                    else:
+                        st.markdown(f'<div style="border-left: 4px solid #ff0000; padding-left: 10px;">', unsafe_allow_html=True)
+                    
                     col1, col2, col3 = st.columns([3, 2, 1])
                     
                     with col1:
-                        st.write(f"**{brand} {model}**")
+                        if decrypt_success:
+                            st.write(f"**Brand:{brand} \t Model:{model}**")
+                        else:
+                            st.write(f"~~{brand} {model}~~")
                         st.caption(f"ID: {car_id}")
+                        if not decrypt_success:
+                            st.error("⚠️ Gagal dekripsi - kunci mungkin salah")
                     
                     with col2:
-                        st.write(f"**Harga:** Rp {price:,.0f}")
+                        if isinstance(price, (int, float)):
+                            st.write(f"**Harga:** Rp {price:,.0f}")
+                        else:
+                            st.write(f"**Harga:** {price}")
                     
                     with col3:
                         if st.button(f"🗑️ Hapus", key=f"delete_{car_id}"):
-                            if delete_car(car_id):
-                                st.success(f"✅ Mobil {brand} {model} berhasil dihapus!")
+                            if delete_car(car_id) & decrypt_success:
+                                st.success(f"✅ Data mobil berhasil dihapus!")
                                 st.rerun()
                             else:
                                 st.error("❌ Gagal menghapus mobil!")
                     
+                    st.markdown('</div>', unsafe_allow_html=True)
                     st.divider()
+        
+        # Tampilkan data terenkripsi jika diminta
+        if show_encrypted:
+            display_encrypted_data()
+
+def display_encrypted_data():
+    """Display raw encrypted data from database"""
+    st.subheader("🔐 Data Terenkripsi di Database")
+    
+    try:
+        conn = sqlite3.connect('cars.db')
+        c = conn.cursor()
+        c.execute('SELECT * FROM cars')
+        encrypted_cars = c.fetchall()
+        conn.close()
+        
+        if not encrypted_cars:
+            st.info("Tidak ada data terenkripsi di database.")
+            return
+            
+        for car in encrypted_cars:
+            car_id, encrypted_model, encrypted_brand, encrypted_price = car
+            
+            with st.expander(f"Data Terenkripsi - Mobil ID {car_id}"):
+                col1, col2 = st.columns(2)
+                
+                with col1:
+                    st.write("**Model:**")
+                    st.code(encrypted_model)
+                    st.write(f"Panjang: {len(encrypted_model)} karakter")
+                
+                with col2:
+                    st.write("**Brand:**")
+                    st.code(encrypted_brand)
+                    st.write(f"Panjang: {len(encrypted_brand)} karakter")
+                
+                st.write("**Harga:**")
+                st.code(encrypted_price)
+                st.write(f"Panjang: {len(encrypted_price)} karakter")
+                
+    except Exception as e:
+        st.error(f"Error mengambil data terenkripsi: {e}")
+
+def display_encrypted_data_only():
+    """Display only encrypted data when no key is provided"""
+    st.subheader("🔐 Data Terenkripsi di Database")
+    st.info("Masukkan kunci untuk mencoba mendekripsi data berikut:")
+    
+    display_encrypted_data()
 
 def page_steganography():
     st.header("🖼️ Steganografi - Sembunyikan Pesan/Gambar dalam Gambar")
@@ -847,12 +1069,6 @@ def page_steganography():
     - Setiap warna diwakili oleh angka 0-255 (8 bit)
     - Teknik LSB mengganti bit terakhir setiap warna dengan bit data rahasia
     - Perubahan ini tidak terlihat oleh mata manusia
-    
-    **Fitur Baru - Gambar dalam Gambar:**
-    - Dapat menyembunyikan gambar lengkap dalam gambar lain
-    - Ukuran gambar rahasia harus lebih kecil dari gambar cover
-    - Gambar hasil tetap terlihat normal
-    - Hanya pihak yang tahu yang dapat mengekstrak gambar rahasia
     """)
 
 def page_file_encryption():
