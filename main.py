@@ -187,7 +187,7 @@ def create_pdf_report(original_filename, operation_type, file_size, status):
     buffer.seek(0)
     return buffer.getvalue()
 
-# ===== FUNGSI DATABASE & AUTH =====
+# ===== FUNGSI DATABASE & AUTH (TANPA ENKRIPSI CAESAR) =====
 
 def hash_password(password):
     return hashlib.sha512(password.encode()).hexdigest()
@@ -208,13 +208,11 @@ def init_db():
 def register_user(username, password):
     try:
         hashed_password = hash_password(password)
-        encrypted_username = caesar_cipher(username, 1)
-        encrypted_password = caesar_cipher(hashed_password, 1)
         
         conn = sqlite3.connect('users.db')
         c = conn.cursor()
         c.execute('INSERT INTO users (username, password) VALUES (?, ?)', 
-                 (encrypted_username, encrypted_password))
+                 (username, hashed_password))
         conn.commit()
         conn.close()
         return True
@@ -226,20 +224,17 @@ def register_user(username, password):
 
 def login_user(username, password):
     try:
-        encrypted_username = caesar_cipher(username, 1)
-        
         conn = sqlite3.connect('users.db')
         c = conn.cursor()
-        c.execute('SELECT password FROM users WHERE username = ?', (encrypted_username,))
+        c.execute('SELECT password FROM users WHERE username = ?', (username,))
         result = c.fetchone()
         conn.close()
         
         if result:
-            encrypted_db_password = result[0]
-            decrypted_hashed_password = caesar_cipher(encrypted_db_password, -1)
+            stored_hashed_password = result[0]
             hashed_input_password = hash_password(password)
             
-            if hashed_input_password == decrypted_hashed_password:
+            if hashed_input_password == stored_hashed_password:
                 return True
         return False
     except Exception as e:
@@ -254,6 +249,63 @@ def validate_input(username, password):
     if not re.match("^[a-zA-Z0-9_]+$", username):
         return "Username hanya boleh mengandung huruf, angka, dan underscore"
     return None
+
+# ===== FUNGSI DATABASE MOBIL =====
+
+def init_car_db():
+    """Initialize database for cars"""
+    conn = sqlite3.connect('cars.db')
+    c = conn.cursor()
+    c.execute('''
+        CREATE TABLE IF NOT EXISTS cars (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            model TEXT NOT NULL,
+            brand TEXT NOT NULL,
+            price REAL NOT NULL
+        )
+    ''')
+    conn.commit()
+    conn.close()
+
+def create_car(model, brand, price):
+    """Add new car to database"""
+    try:
+        conn = sqlite3.connect('cars.db')
+        c = conn.cursor()
+        c.execute('INSERT INTO cars (model, brand, price) VALUES (?, ?, ?)', 
+                 (model, brand, price))
+        conn.commit()
+        conn.close()
+        return True
+    except Exception as e:
+        st.error(f"Error: {e}")
+        return False
+
+def read_cars():
+    """Get all cars from database"""
+    try:
+        conn = sqlite3.connect('cars.db')
+        c = conn.cursor()
+        c.execute('SELECT * FROM cars')
+        cars = c.fetchall()
+        conn.close()
+        return cars
+    except Exception as e:
+        st.error(f"Error: {e}")
+        return []
+
+def delete_car(car_id):
+    """Delete car from database"""
+    try:
+        conn = sqlite3.connect('cars.db')
+        c = conn.cursor()
+        c.execute('DELETE FROM cars WHERE id = ?', (car_id,))
+        conn.commit()
+        conn.close()
+        return True
+    except Exception as e:
+        st.error(f"Error: {e}")
+        return False
 
 # ===== PAGE DEFINITIONS =====
 
@@ -322,6 +374,74 @@ def page_super_encryption():
             st.success(final_result)
             
             st.text_input("Salin hasil:", value=final_result, key="decrypted_result")
+
+def page_car_database():
+    st.header("🚗 Database Mobil")
+    st.write("Kelola data mobil - Create, Read, Delete")
+    
+    # Initialize car database
+    init_car_db()
+    
+    tab1, tab2 = st.tabs(["➕ Tambah Mobil", "📋 Lihat & Hapus Mobil"])
+    
+    with tab1:
+        st.subheader("Tambah Mobil Baru")
+        
+        with st.form("add_car_form"):
+            col1, col2 = st.columns(2)
+            
+            with col1:
+                brand = st.text_input("Brand Mobil", placeholder="Contoh: Toyota, Honda, dll.")
+                model = st.text_input("Model Mobil", placeholder="Contoh: Camry, Civic, dll.")
+            
+            with col2:
+                price = st.number_input("Harga Mobil (Rp)", min_value=0, step=1000000, 
+                                      format="%d", value=100000000)
+            
+            submit_button = st.form_submit_button("💾 Simpan Mobil")
+            
+            if submit_button:
+                if not brand or not model:
+                    st.error("Brand dan Model harus diisi!")
+                elif price <= 0:
+                    st.error("Harga harus lebih dari 0!")
+                else:
+                    if create_car(model, brand, price):
+                        st.success(f"✅ Mobil {brand} {model} berhasil ditambahkan!")
+                    else:
+                        st.error("❌ Gagal menambahkan mobil!")
+    
+    with tab2:
+        st.subheader("Daftar Mobil")
+        
+        cars = read_cars()
+        
+        if not cars:
+            st.info("📝 Belum ada data mobil. Silakan tambah mobil baru di tab 'Tambah Mobil'.")
+        else:
+            st.write(f"**Total {len(cars)} mobil ditemukan:**")
+            
+            for car in cars:
+                car_id, model, brand, price = car
+                
+                with st.container():
+                    col1, col2, col3 = st.columns([3, 2, 1])
+                    
+                    with col1:
+                        st.write(f"**{brand} {model}**")
+                    
+                    with col2:
+                        st.write(f"**Harga:** Rp {price:,.0f}")
+                    
+                    with col3:
+                        if st.button(f"🗑️ Hapus", key=f"delete_{car_id}"):
+                            if delete_car(car_id):
+                                st.success(f"✅ Mobil {brand} {model} berhasil dihapus!")
+                                st.rerun()
+                            else:
+                                st.error("❌ Gagal menghapus mobil!")
+                    
+                    st.divider()
 
 def page_steganography():
     st.header("🖼️ Steganografi - Sembunyikan Pesan/Gambar dalam Gambar")
@@ -845,8 +965,8 @@ def show_main_app():
         st.title("🧭 Navigasi")
         st.write(f"Selamat datang, **{st.session_state.username}**!")
         
-        # Pilihan halaman
-        page_options = ["Super Encryption", "Steganografi", "File Encryption"]
+        # Pilihan halaman (URUTAN BARU)
+        page_options = ["Super Encryption", "Database Mobil", "Steganografi", "File Encryption"]
         selected_page = st.radio("Pilih Halaman:", page_options, 
                                index=page_options.index(st.session_state.current_page))
         
@@ -864,6 +984,8 @@ def show_main_app():
     # Tampilkan konten berdasarkan halaman yang dipilih
     if st.session_state.current_page == "Super Encryption":
         page_super_encryption()
+    elif st.session_state.current_page == "Database Mobil":
+        page_car_database()
     elif st.session_state.current_page == "Steganografi":
         page_steganography()
     elif st.session_state.current_page == "File Encryption":
