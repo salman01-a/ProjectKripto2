@@ -21,7 +21,7 @@ def generate_salsa20_key():
     """Generate random key for Salsa20 (32 bytes)"""
     return secrets.token_bytes(32)
 
-def encrypt_salsa20(text, key):
+def     encrypt_salsa20(text, key):
     """Encrypt text using Salsa20 algorithm"""
     try:
         # Generate random nonce (16 bytes for Salsa20)
@@ -49,17 +49,29 @@ def encrypt_salsa20(text, key):
 def decrypt_salsa20(encrypted_text, key):
     """Decrypt text using ChaCha20 algorithm"""
     try:
+        if not encrypted_text:
+            return None
+            
         # Decode from base64 - PERBAIKAN: handle padding issues
         try:
             encrypted_data = base64.b64decode(encrypted_text.encode('utf-8'))
         except Exception:
             # Try adding padding if necessary
-            padding = 4 - (len(encrypted_text) % 4)
-            if padding != 4:
-                encrypted_text += "=" * padding
-            encrypted_data = base64.b64decode(encrypted_text.encode('utf-8'))
+            try:
+                padding = 4 - (len(encrypted_text) % 4)
+                if padding != 4:
+                    encrypted_text += "=" * padding
+                encrypted_data = base64.b64decode(encrypted_text.encode('utf-8'))
+            except Exception as e:
+                st.error(f"Base64 decode error: {e}")
+                return None
         
-        # Extract nonce (first 16 bytes) and ciphertext - PERBAIKAN: konsisten 16 bytes
+        # Pastikan data cukup panjang untuk nonce
+        if len(encrypted_data) < 16:
+            st.error(f"Data terenkripsi terlalu pendek: {len(encrypted_data)} bytes")
+            return None
+            
+        # Extract nonce (first 16 bytes) and ciphertext
         nonce = encrypted_data[:16]
         ciphertext = encrypted_data[16:]
         
@@ -70,7 +82,14 @@ def decrypt_salsa20(encrypted_text, key):
         
         # Decrypt the text
         decrypted_bytes = decryptor.update(ciphertext) + decryptor.finalize()
-        return decrypted_bytes.decode('utf-8')
+        
+        # Coba decode sebagai UTF-8
+        try:
+            return decrypted_bytes.decode('utf-8')
+        except UnicodeDecodeError:
+            # Jika gagal, coba encoding lain atau return raw bytes
+            st.warning(f"Tidak bisa decode sebagai UTF-8, menggunakan repr: {repr(decrypted_bytes)}")
+            return str(decrypted_bytes)
     
     except Exception as e:
         st.error(f"Decryption error: {e}")
@@ -388,10 +407,10 @@ def read_cars():
             brand = decrypt_salsa20(encrypted_brand, salsa_key)
             price = decrypt_salsa20(encrypted_price, salsa_key)
             
-            if all([model, brand, price_str]):
+            if all([model, brand, price]):
                 try:
                     # Coba konversi ke float, tapi simpan sebagai string untuk konsistensi
-                    price = float(price_str)
+                    price = float(price)
                     decrypted_cars.append((car_id, model, brand, price))
                 except ValueError:
                     st.error(f"Format harga tidak valid untuk mobil ID {car_id}")
