@@ -11,6 +11,63 @@ from cryptography.fernet import Fernet
 from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
 import base64
+from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
+from cryptography.hazmat.backends import default_backend
+import secrets
+
+# ===== FUNGSI SALSA20 ENCRYPTION =====
+
+def generate_salsa20_key():
+    """Generate random key for Salsa20 (32 bytes)"""
+    return secrets.token_bytes(32)
+
+def encrypt_salsa20(text, key):
+    """Encrypt text using Salsa20 algorithm"""
+    try:
+        # Generate random nonce (16 bytes for Salsa20)
+        nonce = secrets.token_bytes(16)
+        
+        # Convert text to bytes
+        text_bytes = text.encode('utf-8')
+        
+        # Create Salsa20 cipher
+        algorithm = algorithms.ChaCha20(key, nonce)
+        cipher = Cipher(algorithm, mode=None, backend=default_backend())
+        encryptor = cipher.encryptor()
+        
+        # Encrypt the text
+        ciphertext = encryptor.update(text_bytes) + encryptor.finalize()
+        
+        # Combine nonce + ciphertext and encode as base64
+        encrypted_data = nonce + ciphertext
+        return base64.b64encode(encrypted_data).decode('utf-8')
+    
+    except Exception as e:
+        st.error(f"Encryption error: {e}")
+        return None
+
+def decrypt_salsa20(encrypted_text, key):
+    """Decrypt text using Salsa20 algorithm"""
+    try:
+        # Decode from base64
+        encrypted_data = base64.b64decode(encrypted_text.encode('utf-8'))
+        
+        # Extract nonce (first 8 bytes) and ciphertext
+        nonce = encrypted_data[:8]
+        ciphertext = encrypted_data[8:]
+        
+        # Create Salsa20 cipher
+        algorithm = algorithms.ChaCha20(key, nonce)
+        cipher = Cipher(algorithm, mode=None, backend=default_backend())
+        decryptor = cipher.decryptor()
+        
+        # Decrypt the text
+        decrypted_bytes = decryptor.update(ciphertext) + decryptor.finalize()
+        return decrypted_bytes.decode('utf-8')
+    
+    except Exception as e:
+        st.error(f"Decryption error: {e}")
+        return None
 
 # ===== FUNGSI CAESAR & XOR =====
 
@@ -250,7 +307,7 @@ def validate_input(username, password):
         return "Username hanya boleh mengandung huruf, angka, dan underscore"
     return None
 
-# ===== FUNGSI DATABASE MOBIL =====
+# ===== FUNGSI DATABASE MOBIL DENGAN ENKRIPSI SALSA20 =====
 
 def init_car_db():
     """Initialize database for cars"""
@@ -261,19 +318,42 @@ def init_car_db():
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             model TEXT NOT NULL,
             brand TEXT NOT NULL,
-            price REAL NOT NULL
+            price TEXT NOT NULL
         )
     ''')
     conn.commit()
     conn.close()
 
+def get_salsa_key():
+    """Get or generate Salsa20 key from session state"""
+    if 'salsa_key' not in st.session_state:
+        # Generate new key if not exists
+        st.session_state.salsa_key = generate_salsa20_key()
+    return st.session_state.salsa_key
+
 def create_car(model, brand, price):
-    """Add new car to database"""
+    """Add new car to database with Salsa20 encryption"""
     try:
+        salsa_key = get_salsa_key()
+        
+        # Debug: print key length
+        st.write(f"Key length: {len(salsa_key)} bytes")
+        
+        # Encrypt all fields
+        encrypted_model = encrypt_salsa20(model, salsa_key)
+        encrypted_brand = encrypt_salsa20(brand, salsa_key)
+        encrypted_price = encrypt_salsa20(str(price), salsa_key)
+        
+        st.write(f"Encryption results - Model: {encrypted_model is not None}, Brand: {encrypted_brand is not None}, Price: {encrypted_price is not None}")
+        
+        if not all([encrypted_model, encrypted_brand, encrypted_price]):
+            st.error("Gagal mengenkripsi data!")
+            return False
+            
         conn = sqlite3.connect('cars.db')
         c = conn.cursor()
         c.execute('INSERT INTO cars (model, brand, price) VALUES (?, ?, ?)', 
-                 (model, brand, price))
+                 (encrypted_model, encrypted_brand, encrypted_price))
         conn.commit()
         conn.close()
         return True
@@ -282,14 +362,30 @@ def create_car(model, brand, price):
         return False
 
 def read_cars():
-    """Get all cars from database"""
+    """Get all cars from database with Salsa20 decryption"""
     try:
+        salsa_key = get_salsa_key()
         conn = sqlite3.connect('cars.db')
         c = conn.cursor()
         c.execute('SELECT * FROM cars')
-        cars = c.fetchall()
+        encrypted_cars = c.fetchall()
         conn.close()
-        return cars
+        
+        # Decrypt all fields
+        decrypted_cars = []
+        for car in encrypted_cars:
+            car_id, encrypted_model, encrypted_brand, encrypted_price = car
+            
+            model = decrypt_salsa20(encrypted_model, salsa_key)
+            brand = decrypt_salsa20(encrypted_brand, salsa_key)
+            price = decrypt_salsa20(encrypted_price, salsa_key)
+            
+            if all([model, brand, price]):
+                decrypted_cars.append((car_id, model, brand, float(price)))
+            else:
+                st.error(f"Gagal mendekripsi data mobil ID {car_id}")
+                
+        return decrypted_cars
     except Exception as e:
         st.error(f"Error: {e}")
         return []
@@ -376,11 +472,25 @@ def page_super_encryption():
             st.text_input("Salin hasil:", value=final_result, key="decrypted_result")
 
 def page_car_database():
-    st.header("🚗 Database Mobil")
-    st.write("Kelola data mobil - Create, Read, Delete")
+    st.header("🚗 Database Mobil dengan Enkripsi Salsa20")
+    st.write("Kelola data mobil dengan enkripsi Salsa20 - Create, Read, Delete")
     
     # Initialize car database
     init_car_db()
+    
+    # Info tentang enkripsi
+    with st.expander("ℹ️ Tentang Enkripsi Salsa20"):
+        st.write("""
+        **Fitur Keamanan:**
+        - 🔐 **Salsa20 Encryption**: Semua data dienkripsi sebelum disimpan ke database
+        - 🔑 **Key Management**: Kunci enkripsi disimpan secara aman di session
+        - 🛡️ **Data Protection**: Model, brand, dan harga mobil terenkripsi di database
+        
+        **Alur Kerja:**
+        1. Data dienkripsi dengan Salsa20 sebelum disimpan
+        2. Data didekripsi saat akan ditampilkan
+        3. Kunci enkripsi di-generate otomatis saat session dimulai
+        """)
     
     tab1, tab2 = st.tabs(["➕ Tambah Mobil", "📋 Lihat & Hapus Mobil"])
     
@@ -398,7 +508,7 @@ def page_car_database():
                 price = st.number_input("Harga Mobil (Rp)", min_value=0, step=1000000, 
                                       format="%d", value=100000000)
             
-            submit_button = st.form_submit_button("💾 Simpan Mobil")
+            submit_button = st.form_submit_button("💾 Simpan Mobil (Terenkripsi)")
             
             if submit_button:
                 if not brand or not model:
@@ -407,12 +517,12 @@ def page_car_database():
                     st.error("Harga harus lebih dari 0!")
                 else:
                     if create_car(model, brand, price):
-                        st.success(f"✅ Mobil {brand} {model} berhasil ditambahkan!")
+                        st.success(f"✅ Mobil {brand} {model} berhasil ditambahkan dengan enkripsi Salsa20!")
                     else:
                         st.error("❌ Gagal menambahkan mobil!")
     
     with tab2:
-        st.subheader("Daftar Mobil")
+        st.subheader("Daftar Mobil (Terdokripsi)")
         
         cars = read_cars()
         
@@ -429,6 +539,7 @@ def page_car_database():
                     
                     with col1:
                         st.write(f"**{brand} {model}**")
+                        st.caption(f"ID: {car_id}")
                     
                     with col2:
                         st.write(f"**Harga:** Rp {price:,.0f}")
@@ -979,6 +1090,7 @@ def show_main_app():
         if st.button("🚪 Logout"):
             st.session_state.logged_in = False
             st.session_state.username = ""
+            st.session_state.pop('salsa_key', None)  # Hapus kunci saat logout
             st.rerun()
     
     # Tampilkan konten berdasarkan halaman yang dipilih
