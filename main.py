@@ -6,14 +6,13 @@ from Halaman.super_enkripsi import page_super_encryption
 from Halaman.enkripsi_file import page_file_encryption
 from Halaman.stegano import page_steganography
 from Halaman.enkripsi_database import page_car_database
-
-# ===== FUNGSI CHACHA20 =====
+from Halaman.crypto_utils import decrypt_chacha20, encrypt_chacha20
 
 def hash_password(password):
     return hashlib.sha512(password.encode()).hexdigest()
 
 def init_db():
-    conn = sqlite3.connect('users.db')
+    conn = sqlite3.connect('database.db')
     c = conn.cursor()
     c.execute('''
         CREATE TABLE IF NOT EXISTS users (
@@ -29,7 +28,7 @@ def register_user(username, password):
     try:
         hashed_password = hash_password(password)
         
-        conn = sqlite3.connect('users.db')
+        conn = sqlite3.connect('database.db')
         c = conn.cursor()
         c.execute('INSERT INTO users (username, password) VALUES (?, ?)', 
                  (username, hashed_password))
@@ -44,7 +43,7 @@ def register_user(username, password):
 
 def login_user(username, password):
     try:
-        conn = sqlite3.connect('users.db')
+        conn = sqlite3.connect('database.db')
         c = conn.cursor()
         c.execute('SELECT password FROM users WHERE username = ?', (username,))
         result = c.fetchone()

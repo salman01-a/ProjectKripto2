@@ -4,7 +4,7 @@ from Halaman.crypto_utils import encrypt_chacha20, decrypt_chacha20
 import base64
 def init_car_db():
     """Initialize database for cars dengan kolom baru"""
-    conn = sqlite3.connect('cars.db')
+    conn = sqlite3.connect('database.db')
     c = conn.cursor()
     c.execute('''
         CREATE TABLE IF NOT EXISTS cars (
@@ -38,7 +38,7 @@ def create_car(model, brand, price, encryption_key):
             st.error("Gagal mengenkripsi data! Periksa kunci dan data input.")
             return False
             
-        conn = sqlite3.connect('cars.db')
+        conn = sqlite3.connect('database.db')
         c = conn.cursor()
         c.execute('INSERT INTO cars (model, brand, price, dekripsi_mobil) VALUES (?, ?, ?, ?)', 
                  (encrypted_model, encrypted_brand, encrypted_price, encrypted_dekripsi))
@@ -54,7 +54,7 @@ def create_car(model, brand, price, encryption_key):
 def read_cars(encryption_key):
     """Get all cars from database dengan kolom dekripsi_mobil"""
     try:
-        conn = sqlite3.connect('cars.db')
+        conn = sqlite3.connect('database.db')
         c = conn.cursor()
         c.execute('SELECT * FROM cars')
         encrypted_cars = c.fetchall()
@@ -109,7 +109,7 @@ def update_car_dekripsi(car_data, dekripsi_text, encryption_key):
             # jika fungsi enkripsi sudah mengembalikan string
             encrypted_b64 = str(encrypted_dekripsi)
 
-        conn = sqlite3.connect('cars.db', timeout=10)
+        conn = sqlite3.connect('database.db', timeout=10)
         c = conn.cursor()
 
         # 1) Jika ada id, gunakan id -> paling andal
@@ -253,7 +253,7 @@ def page_car_database():
             elif successful_decrypts > 0:
                 st.warning(f"⚠️ {successful_decrypts} dari {total_cars} mobil berhasil didekripsi.")
             else:
-                st.error(f"❌ Tidak ada data yang berhasil didekripsi dengan kunci ini.")
+                st.error(f" Tidak ada data yang berhasil didekripsi dengan kunci ini.")
         
         if not cars:
             st.info("📝 Belum ada data mobil.")
@@ -273,9 +273,9 @@ def page_car_database():
                     
                     with col1:
                         if decrypt_success:
-                            st.write(f"**{brand} {model}**")
+                            st.write(f"** Brand:{brand} Model:{model}**")
                         else:
-                            st.write(f"~~{brand} {model}~~")
+                            st.write(f"~~Brand:{brand} Model:{model}~~")
                         st.caption(f"ID: {car_id}")
                     
                     with col2:
@@ -293,9 +293,11 @@ def page_car_database():
                     
                     with col4:
                         if st.button(f"🗑️", key=f"delete_{car_id}"):
-                            if delete_car(car_id):
+                            if delete_car(car_id) & decrypt_success:
                                 st.success("✅ Data dihapus!")
                                 st.rerun()
+                            else:
+                                st.error("❌ Gagal Menghapus data")
                     
                     st.markdown('</div>', unsafe_allow_html=True)
                     st.divider()
@@ -305,7 +307,7 @@ def display_encrypted_data():
     st.subheader("🔐 Data Terenkripsi di Database")
     
     try:
-        conn = sqlite3.connect('cars.db')
+        conn = sqlite3.connect('database.db')
         c = conn.cursor()
         c.execute('SELECT * FROM cars')
         encrypted_cars = c.fetchall()

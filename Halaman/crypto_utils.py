@@ -2,10 +2,10 @@ import streamlit as st
 import hashlib
 import secrets
 import base64
-from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
-from cryptography.hazmat.backends import default_backend
+from Crypto.Cipher import ChaCha20
+from Crypto.Random import get_random_bytes
 
-# ===== FUNGSI CHACHA20 =====
+# ===== FUNGSI CHACHA20 DENGAN PYCRYPTODOME =====
 def derive_chacha_key(user_key):
     """Derive 32-byte key from user input using SHA256"""
     return hashlib.sha256(user_key.encode()).digest()
@@ -16,19 +16,17 @@ def encrypt_chacha20(text, user_key):
         # Derive key from user input
         key = derive_chacha_key(user_key)
         
-        # Generate random nonce (16 bytes for ChaCha20)
-        nonce = secrets.token_bytes(16)
+        # Generate random nonce (12 bytes)
+        nonce = get_random_bytes(12)
         
         # Convert text to bytes
         text_bytes = text.encode('utf-8')
         
         # Create ChaCha20 cipher
-        algorithm = algorithms.ChaCha20(key, nonce)
-        cipher = Cipher(algorithm, mode=None, backend=default_backend())
-        encryptor = cipher.encryptor()
+        cipher = ChaCha20.new(key=key, nonce=nonce)
         
         # Encrypt the text
-        ciphertext = encryptor.update(text_bytes) + encryptor.finalize()
+        ciphertext = cipher.encrypt(text_bytes)
         
         # Combine nonce + ciphertext and encode as base64
         encrypted_data = nonce + ciphertext
@@ -60,20 +58,18 @@ def decrypt_chacha20(encrypted_text, user_key):
             except Exception as e:
                 return f"[BASE64_ERROR: {str(e)}]"
         
-        # Extract nonce (first 16 bytes) and ciphertext
-        if len(encrypted_data) < 16:
+        # Extract nonce (first 12 bytes) and ciphertext
+        if len(encrypted_data) < 12:
             return f"[DATA_TOO_SHORT: {len(encrypted_data)} bytes]"
             
-        nonce = encrypted_data[:16]
-        ciphertext = encrypted_data[16:]
+        nonce = encrypted_data[:12]
+        ciphertext = encrypted_data[12:]
         
         # Create ChaCha20 cipher
-        algorithm = algorithms.ChaCha20(key, nonce)
-        cipher = Cipher(algorithm, mode=None, backend=default_backend())
-        decryptor = cipher.decryptor()
+        cipher = ChaCha20.new(key=key, nonce=nonce)
         
         # Decrypt the text
-        decrypted_bytes = decryptor.update(ciphertext) + decryptor.finalize()
+        decrypted_bytes = cipher.decrypt(ciphertext)
         
         # Try to decode as UTF-8
         try:
@@ -88,7 +84,7 @@ def decrypt_chacha20(encrypted_text, user_key):
     
     except Exception as e:
         return f"[DECRYPTION_ERROR: {str(e)}]"
-
+    
 # ===== FUNGSI SUPER ENCRYPTION =====
 def caesar_cipher(text, shift):
     result = ""
