@@ -348,10 +348,17 @@ def page_car_database():
                     
                     with col3:
                         st.write("**Dekripsi Mobil:**")
-                        if dekripsi_mobil and dekripsi_mobil != "[EMPTY]":
-                            st.code(dekripsi_mobil[:50] + "..." if len(dekripsi_mobil) > 50 else dekripsi_mobil)
-                        else:
-                            st.info("Belum diisi")
+                    if dekripsi_mobil and dekripsi_mobil != "[EMPTY]":
+                        with st.expander("📋 Lihat Deskripsi Lengkap"):
+                            st.text_area(
+                                "Salin teks ini untuk didekripsi:",
+                                value=dekripsi_mobil,
+                                key=f"desc_{car_id}",
+                                height=150,
+                                label_visibility="collapsed"
+                            )
+                    else:
+                        st.info("Belum diisi")
                     
                     with col4:
                         if st.button(f"🗑️", key=f"delete_{car_id}"):
